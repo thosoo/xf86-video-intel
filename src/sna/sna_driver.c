@@ -489,14 +489,22 @@ static bool setup_tear_free(struct sna *sna)
 		goto done;
 	}
 
-	if (!xf86GetOptValBool(sna->Options, OPTION_TEAR_FREE, &enable)) {
-		enable = enable_tear_free(sna);
-		from = X_DEFAULT;
-	} else
-		from = X_CONFIG;
+        if (!xf86GetOptValBool(sna->Options, OPTION_TEAR_FREE, &enable)) {
+                enable = enable_tear_free(sna);
+                from = X_DEFAULT;
+        } else
+                from = X_CONFIG;
 
-	if (enable)
-		sna->flags |= SNA_WANT_TEAR_FREE | SNA_TEAR_FREE;
+        if (enable && sna->kgem.gen < 030 &&
+            sna->kgem.aperture_total <= 8*1024*1024) {
+                xf86DrvMsg(sna->scrn->scrnIndex, X_WARNING,
+                           "Disabling TearFree, only %u KiB VRAM\n",
+                           sna->kgem.aperture_total / 1024);
+                enable = false;
+        }
+
+        if (enable)
+                sna->flags |= SNA_WANT_TEAR_FREE | SNA_TEAR_FREE;
 
 done:
 	xf86DrvMsg(sna->scrn->scrnIndex, from, "TearFree %sabled\n",

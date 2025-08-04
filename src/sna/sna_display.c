@@ -511,22 +511,25 @@ bool sna_crtc_is_transformed(xf86CrtcPtr crtc)
 
 static inline bool msc64(struct sna_crtc *sna_crtc, uint32_t seq, uint64_t *msc)
 {
-	bool record = true;
-	if (seq < sna_crtc->last_seq) {
-		if (sna_crtc->last_seq - seq > 0x40000000) {
-			sna_crtc->wrap_seq++;
-			DBG(("%s: crtc=%d wrapped; was %u, now %u, wraps=%u\n",
-			     __FUNCTION__, __sna_crtc_index(sna_crtc),
-			     sna_crtc->last_seq, seq, sna_crtc->wrap_seq));
-		} else {
-			DBG(("%s: crtc=%d msc went backwards; was %u, now %u; ignoring for last_swap\n",
-			     __FUNCTION__, __sna_crtc_index(sna_crtc), sna_crtc->last_seq, seq));
+       bool record = true;
+       struct sna *sna = to_sna(sna_crtc->base->scrn);
+       uint32_t wrap = sna->kgem.gen < 030 ? 0x8000 : 0x40000000;
 
-			record = false;
-		}
-	}
-	*msc = (uint64_t)sna_crtc->wrap_seq << 32 | seq;
-	return record;
+       if (seq < sna_crtc->last_seq) {
+               if (sna_crtc->last_seq - seq > wrap) {
+                       sna_crtc->wrap_seq++;
+                       DBG(("%s: crtc=%d wrapped; was %u, now %u, wraps=%u\n",
+                            __FUNCTION__, __sna_crtc_index(sna_crtc),
+                            sna_crtc->last_seq, seq, sna_crtc->wrap_seq));
+               } else {
+                       DBG(("%s: crtc=%d msc went backwards; was %u, now %u; ignoring for last_swap\n",
+                            __FUNCTION__, __sna_crtc_index(sna_crtc), sna_crtc->last_seq, seq));
+
+                       record = false;
+               }
+       }
+       *msc = (uint64_t)sna_crtc->wrap_seq << 32 | seq;
+       return record;
 }
 
 uint64_t sna_crtc_record_swap(xf86CrtcPtr crtc,
@@ -7247,14 +7250,19 @@ update_scanout:
 		 * completion event. All other crtc's events will be discarded.
 		 */
 		arg.user_data = (uintptr_t)crtc;
-		arg.flags = DRM_MODE_PAGE_FLIP_EVENT;
-		if (async)
-			arg.flags |= DRM_MODE_PAGE_FLIP_ASYNC;
-		arg.reserved = 0;
+                arg.flags = DRM_MODE_PAGE_FLIP_EVENT;
+                if (async)
+                        arg.flags |= DRM_MODE_PAGE_FLIP_ASYNC;
+                arg.reserved = 0;
+
+               if (sna->kgem.nfence >= sna->kgem.fence_max) {
+                       DBG(("%s: no free fence registers for page flip\n", __FUNCTION__));
+                       goto error;
+               }
 
 retry_flip:
-		DBG(("%s: crtc %d id=%d, crtc=%d  --> fb %d\n",
-		     __FUNCTION__, i, __sna_crtc_id(crtc), __sna_crtc_index(crtc), arg.fb_id));
+                DBG(("%s: crtc %d id=%d, crtc=%d  --> fb %d\n",
+                     __FUNCTION__, i, __sna_crtc_id(crtc), __sna_crtc_index(crtc), arg.fb_id));
 		if (drmIoctl(sna->kgem.fd, DRM_IOCTL_MODE_PAGE_FLIP, &arg)) {
 			ERR(("%s: pageflip failed with err=%d\n", __FUNCTION__, errno));
 
@@ -9101,14 +9109,22 @@ fallback:
 }
 
 static void shadow_flip_handler(struct drm_event_vblank *e,
-				void *data)
+                                void *data)
 {
-	struct sna *sna = data;
+        struct sna *sna = data;
 
-	sna->timer_active |= 1 << FLUSH_TIMER;
-	sna->timer_expire[FLUSH_TIMER] =
-		e->tv_sec * 1000 + e->tv_usec / 1000 +
-		sna->vblank_interval / 2;
+        sna->timer_active |= 1 << FLUSH_TIMER;
+        sna->timer_expire[FLUSH_TIMER] =
+                e->tv_sec * 1000 + e->tv_usec / 1000 +
+                sna->vblank_interval / 2;
+
+       RegionRec region;
+       region.extents.x1 = 0;
+       region.extents.y1 = 0;
+       region.extents.x2 = sna->scrn->virtualX;
+       region.extents.y2 = sna->scrn->virtualY;
+       region.data = NULL;
+       DamageDamageRegion(&sna->front->drawable, &region);
 }
 
 void sna_shadow_set_crtc(struct sna *sna,
