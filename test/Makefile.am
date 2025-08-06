@@ -53,6 +53,9 @@ stress_TESTS += \
 present_speed_CFLAGS = ${AM_CFLAGS} -pthread
 endif
 check_PROGRAMS = $(stress_TESTS)
+check_PROGRAMS += 855gm-ytiling
+
+TESTS = $(stress_TESTS) 855gm-ytiling
 
 noinst_PROGRAMS = lowlevel-blt-bench
 
